@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Asistente Tienda IA</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            padding: 20px;
+            background: #f4f4f4;
+        }
+
+        .chat {
+            max-width: 900px;
+            min-height: 80vh;
+            margin: 30px auto;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+            padding: 30px 30px 30px 30px;
+        }
+
+        .bubble {
+            background: #e6f0ff;
+            border-radius: 16px 16px 4px 16px;
+            padding: 18px 20px;
+            margin-bottom: 18px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+            font-size: 1.15em;
+            color: #222;
+            max-width: 100%;
+            /* Quitar animación para evitar temblor en tablas */
+            opacity: 1;
+            transform: none;
+            /* animation: fadeInUp 0.5s forwards; */
+        }
+
+        .bubble.user {
+            background: #d1ffe6;
+            border-radius: 16px 16px 16px 4px;
+            align-self: flex-end;
+        }
+
+        @keyframes fadeInUp {
+            to {
+                opacity: 1;
+                transform: none;
+            }
+        }
+
+        .small {
+            font-size: 0.9em;
+            color: #777;
+            margin-top: 10px;
+        }
+
+        .loader {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 20px 0;
+        }
+
+        .dot {
+            width: 12px;
+            height: 12px;
+            margin: 0 4px;
+            background: #4f8cff;
+            border-radius: 50%;
+            display: inline-block;
+            animation: bounce 1.2s infinite;
+        }
+
+        .dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes bounce {
+            0%,
+            80%,
+            100% {
+                transform: scale(1);
+            }
+
+            40% {
+                transform: scale(1.5);
+            }
+        }
+
+        input,
+        button {
+            font-size: 1.1em;
+        }
+
+        button {
+            background: #4f8cff;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 22px;
+            margin-top: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2563eb;
+        }
+
+        #question {
+            margin-bottom: 10px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+        }
+
+        #chatLog {
+            display: flex;
+            flex-direction: column;
+            margin-top: 20px;
+            max-height: 65vh;
+            overflow-y: auto;
+        }
+
+        /* Scroll SOLO para tablas */
+
+        .table-scroll {
+            max-width: 100%;
+            max-height: 350px;
+            overflow-x: auto;
+            overflow-y: auto;
+            margin: 0 auto 10px auto;
+            background: #fff;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            min-width: 600px;
+        }
+
+        th,
+        td {
+            padding: 8px 16px;
+            border: 1px solid #bbb;
+            text-align: left;
+            font-size: 1em;
+        }
+
+        tr:nth-child(even) {
+            background: #f7faff;
+        }
+
+        tr:nth-child(odd) {
+            background: #fff;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="chat">
+        <h2 style="text-align:center; font-size:2em; margin-bottom: 20px;">🛍️ Asistente de Tienda IA</h2>
+        <input id="question" placeholder="¿Qué productos se han vendido más?" style="width: 100%; padding: 12px;" />
+        <button onclick="sendQuestion()">Preguntar</button>
+        <button onclick="getResumen()" style="background:#2563eb; margin-left:10px;">Ver resumen</button>
+        <div id="chatLog"></div>
+        <div id="loader" class="loader" style="display:none;">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>
+    </div>
+
+    <script>
+        function addMessage(content, isUser = false) {
+            const div = document.createElement("div");
+            div.className = "bubble" + (isUser ? " user" : "");
+            div.innerHTML = content;
+            document.getElementById("chatLog").appendChild(div);
+            div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+
+        function showLoader(show) {
+            document.getElementById("loader").style.display = show ? "flex" : "none";
+        }
+
+        // Inserta scroll solo en tablas
+        function addTableScroll(html) {
+            // Busca la primera tabla y la envuelve en un div con clase table-scroll
+            return html.replace(/(<table[\s\S]*?<\/table>)/i, '<div class="table-scroll">$1</div>');
+        }
+
+        async function sendQuestion() {
+            const q = document.getElementById("question").value.trim();
+            if (!q) return;
+            addMessage(q, true);
+            document.getElementById("question").value = "";
+            showLoader(true);
+            try {
+                const response = await fetch("http://localhost:8000/ask", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question: q })
+                });
+                const data = await response.json();
+                // Animación de "escribiendo" y scroll solo en tabla
+                let html = data.response.replace(/Interpretación:/g, "<b>Interpretación:</b>").replace(/Resultados:/g, "<b>Resultados:</b>").replace(/Query:/g, "<div class='small'><b>Query:</b>") + "</div>";
+                html = addTableScroll(html);
+                await typeResponse(html);
+            } catch (e) {
+                addMessage("<span style='color:red'>Error al conectar con el backend.</span>");
+            }
+            showLoader(false);
+        }
+
+        async function getResumen() {
+            showLoader(true);
+            try {
+                const response = await fetch("http://localhost:8000/resumen_pdf");
+                const data = await response.json();
+                await typeResponse('<b>Resumen de la conversación:</b><br>' + data.resumen);
+            } catch (e) {
+                addMessage("<span style='color:red'>No se pudo obtener el resumen.</span>");
+            }
+            showLoader(false);
+        }
+
+        async function typeResponse(html) {
+            const container = document.createElement("div");
+            container.className = "bubble";
+            document.getElementById("chatLog").appendChild(container);
+            // Mostrar la respuesta de golpe, sin animación para evitar temblor en tablas
+            container.innerHTML = html;
+            container.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+
+        document.getElementById("question").addEventListener("keydown", function (e) {
+            if (e.key === "Enter") sendQuestion();
+        });
+    </script>
+</body>
+
+</html>
