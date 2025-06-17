@@ -48,13 +48,25 @@ def adaptar_sql_para_sqlite(sql_query: str) -> str:
     sql_query = sql_query.replace("''", "'")
     return sql_query
 
+# Lista global para almacenar el contexto de las últimas 5 preguntas y respuestas
+CONTEXT_HISTORY = []  # cada elemento será un dict: {"question": ..., "answer": ...}
+MAX_CONTEXT = 5
+
 @app.post("/ask")
 def ask_question(req: QueryRequest):
     question = req.question
     # 1. Leer el prompt base desde archivo externo
     with open("prompt.txt", "r", encoding="utf-8") as f:
         prompt_base = f.read()
-    prompt = prompt_base.replace("{question}", question)
+    # Construir contexto previo
+    context_text = ""
+    for i, ctx in enumerate(CONTEXT_HISTORY[-MAX_CONTEXT:], 1):
+        context_text += f"Pregunta {i}: {ctx['question']}\nRespuesta {i}: {ctx['answer']}\n"
+    if context_text:
+        prompt = context_text + f"\nPregunta actual: {question}\n"
+        prompt += prompt_base.replace("{question}", question)
+    else:
+        prompt = prompt_base.replace("{question}", question)
     # 2. Consultar a OpenAI
     response = openai.ChatCompletion.create(
         model="gpt-4",
@@ -78,7 +90,11 @@ def ask_question(req: QueryRequest):
                 sql_query = line.strip()
                 break
     if not sql_query:
-        return {"response": "No se pudo extraer el query SQL de la respuesta."}
+        # Si no se pudo extraer un query, mostrar la respuesta original de OpenAI
+        CONTEXT_HISTORY.append({"question": question, "answer": result})
+        if len(CONTEXT_HISTORY) > MAX_CONTEXT:
+            CONTEXT_HISTORY.pop(0)
+        return {"response": result}
     # --- ADAPTAR SQL PARA SQLITE ---
     sql_query = adaptar_sql_para_sqlite(sql_query)
     # 4. Ejecutar el query en la base de datos local
@@ -106,6 +122,10 @@ def ask_question(req: QueryRequest):
         f"<div style='margin-bottom:18px; text-align:center;'>{table_html}</div>"
         f"<div class='small' style='margin-top:18px; color:#555;'><b>Query SQL generado:</b><br><code style='font-size:0.95em'>{sql_query}</code></div>"
     )
+    # Guardar en el contexto
+    CONTEXT_HISTORY.append({"question": question, "answer": interpretacion})
+    if len(CONTEXT_HISTORY) > MAX_CONTEXT:
+        CONTEXT_HISTORY.pop(0)
     return {"response": respuesta}
 
 @app.post("/ask_agent")
@@ -114,10 +134,18 @@ def ask_agent(req: AgentRequest):
     agent = req.agent
     if agent not in AGENTS:
         return {"response": f"Agente no soportado. Opciones: {list(AGENTS.keys())}"}
+    # Construir contexto previo
+    context_text = ""
+    for i, ctx in enumerate(CONTEXT_HISTORY[-MAX_CONTEXT:], 1):
+        context_text += f"Pregunta {i}: {ctx['question']}\nRespuesta {i}: {ctx['answer']}\n"
     # Construir prompt con instrucciones del agente
     with open("prompt.txt", "r", encoding="utf-8") as f:
         prompt_base = f.read()
-    prompt = f"{AGENTS[agent]}\n\n" + prompt_base.replace("{question}", question)
+    if context_text:
+        prompt = f"{AGENTS[agent]}\n\n" + context_text + f"\nPregunta actual: {question}\n"
+        prompt += prompt_base.replace("{question}", question)
+    else:
+        prompt = f"{AGENTS[agent]}\n\n" + prompt_base.replace("{question}", question)
     response = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}]
@@ -140,7 +168,11 @@ def ask_agent(req: AgentRequest):
                 sql_query = line.strip()
                 break
     if not sql_query:
-        return {"response": "No se pudo extraer el query SQL de la respuesta."}
+        # Si no se pudo extraer un query, mostrar la respuesta original de OpenAI
+        CONTEXT_HISTORY.append({"question": question, "answer": result})
+        if len(CONTEXT_HISTORY) > MAX_CONTEXT:
+            CONTEXT_HISTORY.pop(0)
+        return {"response": result}
     sql_query = adaptar_sql_para_sqlite(sql_query)
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -163,4 +195,8 @@ def ask_agent(req: AgentRequest):
         f"<div style='margin-bottom:18px; text-align:center;'>{table_html}</div>"
         f"<div class='small' style='margin-top:18px; color:#555;'><b>Query SQL generado:</b><br><code style='font-size:0.95em'>{sql_query}</code></div>"
     )
+    # Guardar en el contexto
+    CONTEXT_HISTORY.append({"question": question, "answer": interpretacion})
+    if len(CONTEXT_HISTORY) > MAX_CONTEXT:
+        CONTEXT_HISTORY.pop(0)
     return {"response": respuesta}

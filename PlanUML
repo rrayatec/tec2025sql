@@ -1,0 +1,14 @@
+@startuml
+actor Usuario
+Usuario -> FastAPI: Pregunta
+FastAPI -> Contexto: Consulta últimas 5 preguntas/respuestas
+FastAPI -> Prompt: Genera prompt
+Prompt -> OpenAI: Envía prompt
+OpenAI -> FastAPI: Respuesta
+FastAPI -> AdaptadorSQL: Si hay SQL, adapta a SQLite
+AdaptadorSQL -> SQLite: Ejecuta query
+SQLite -> FastAPI: Resultados
+FastAPI -> Render: Renderiza tabla HTML + interpretación
+FastAPI -> Usuario: Respuesta
+OpenAI -> FastAPI: Si no hay SQL, respuesta directa
+@enduml
