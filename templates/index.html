@@ -171,11 +171,6 @@
             <option value="profesor">Profesor</option>
             <option value="doc_reader">Reader</option>
         </select>
-        <form id="uploadForm" enctype="multipart/form-data" style="margin-bottom:18px;">
-            <input type="file" id="docFile" name="file" accept=".pdf,.txt" />
-            <button type="submit">Subir documento</button>
-            <span id="uploadMsg" class="small"></span>
-        </form>
         <form id="summarizeForm" enctype="multipart/form-data" style="margin-bottom:18px;">
             <input type="file" id="summarizeFile" name="file" accept=".pdf,.txt" />
             <button type="submit">Resumir documento</button>
@@ -291,30 +286,6 @@
 
         document.getElementById("question").addEventListener("keydown", function (e) {
             if (e.key === "Enter") sendQuestion();
-        });
-
-        // Manejar el envío del formulario de carga de documentos
-        document.getElementById("uploadForm").addEventListener("submit", async function (e) {
-            e.preventDefault();
-            const fileInput = document.getElementById("docFile");
-            const msg = document.getElementById("uploadMsg");
-            if (!fileInput.files.length) {
-                msg.textContent = "Selecciona un archivo.";
-                return;
-            }
-            msg.textContent = "Subiendo...";
-            const formData = new FormData();
-            formData.append("file", fileInput.files[0]);
-            try {
-                const resp = await fetch("/upload_doc", {
-                    method: "POST",
-                    body: formData
-                });
-                const data = await resp.json();
-                msg.textContent = data.msg || data.error || "";
-            } catch {
-                msg.textContent = "Error al subir archivo.";
-            }
         });
 
         // Manejar el envío del formulario de resumen de documentos
