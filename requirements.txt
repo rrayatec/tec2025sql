@@ -3,5 +3,3 @@ uvicorn
 openai==0.28
 pydantic
 jinja2
-langgraph
-langchain

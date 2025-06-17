@@ -165,7 +165,15 @@
     <div class="chat">
         <h2 style="text-align:center; font-size:2em; margin-bottom: 20px;">🛍️ Asistente de Tienda IA</h2>
         <input id="question" placeholder="¿Qué productos se han vendido más?" style="width: 100%; padding: 12px;" />
-        <button onclick="sendQuestion()">Preguntar</button>
+        <select id="agent" style="width:100%; padding:10px; margin-top:8px;">
+            <option value="sql_expert">Experto SQL</option>
+            <option value="data_analyst">Analista de Datos</option>
+            <option value="profesor">Profesor</option>
+        </select>
+        <div style="display:flex; gap:10px; margin-top:10px;">
+            <button onclick="sendQuestion()">Preguntar (Normal)</button>
+            <button onclick="sendAgentQuestion()">Preguntar con Agente</button>
+        </div>
         <div id="chatLog"></div>
         <div id="loader" class="loader" style="display:none;">
             <span class="dot"></span><span class="dot"></span><span class="dot"></span>
@@ -205,6 +213,29 @@
                 });
                 const data = await response.json();
                 // Animación de "escribiendo" y scroll solo en tabla
+                let html = data.response.replace(/Interpretación:/g, "<b>Interpretación:</b>").replace(/Resultados:/g, "<b>Resultados:</b>").replace(/Query:/g, "<div class='small'><b>Query:</b>") + "</div>";
+                html = addTableScroll(html);
+                await typeResponse(html);
+            } catch (e) {
+                addMessage("<span style='color:red'>Error al conectar con el backend.</span>");
+            }
+            showLoader(false);
+        }
+
+        async function sendAgentQuestion() {
+            const q = document.getElementById("question").value.trim();
+            const agent = document.getElementById("agent").value;
+            if (!q) return;
+            addMessage(q + "<br><span class='small'>(Agente: " + agent + ")</span>", true);
+            document.getElementById("question").value = "";
+            showLoader(true);
+            try {
+                const response = await fetch("/ask_agent", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question: q, agent: agent })
+                });
+                const data = await response.json();
                 let html = data.response.replace(/Interpretación:/g, "<b>Interpretación:</b>").replace(/Resultados:/g, "<b>Resultados:</b>").replace(/Query:/g, "<div class='small'><b>Query:</b>") + "</div>";
                 html = addTableScroll(html);
                 await typeResponse(html);
