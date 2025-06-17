@@ -7,6 +7,10 @@ from pydantic import BaseModel
 import openai
 import os
 import re
+from fastapi import UploadFile, File
+import tiktoken
+import pdfplumber
+import numpy as np
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -14,6 +18,7 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DB_PATH = "store.db"
+EMBEDDINGS_DB = "embeddings.db"
 templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
@@ -27,10 +32,15 @@ class AgentRequest(BaseModel):
     question: str
     agent: str  # nombre del agente
 
+class DocSummaryRequest(BaseModel):
+    question: str
+    agent: str = "doc_reader"
+
 AGENTS = {
     "sql_expert": "Eres un experto en SQL. Responde solo con el query SQL correcto y una breve interpretación.",
     "data_analyst": "Eres un analista de datos. Explica el razonamiento antes de dar el query SQL y proporciona una interpretación detallada.",
     "profesor": "Eres un profesor universitario. Explica paso a paso cómo resolver la consulta y luego da el query SQL y su interpretación.",
+    "doc_reader": "Eres un asistente que solo puede leer y resumir información de los documentos proporcionados. No generes SQL ni accedas a la base de datos. Responde solo con un resumen claro y directo usando únicamente el contexto extraído."
 }
 
 def adaptar_sql_para_sqlite(sql_query: str) -> str:
@@ -164,3 +174,103 @@ def ask_agent(req: AgentRequest):
         f"<div class='small' style='margin-top:18px; color:#555;'><b>Query SQL generado:</b><br><code style='font-size:0.95em'>{sql_query}</code></div>"
     )
     return {"response": respuesta}
+
+# --- SOLO LECTURA DE DOCUMENTOS: resumen textual ---
+AGENTS["doc_reader"] = "Eres un asistente que solo puede leer y resumir información de los documentos proporcionados. No generes SQL ni accedas a la base de datos. Responde solo con un resumen claro y directo usando únicamente el contexto extraído."
+
+# Utilidad para obtener embedding de un texto
+async def get_embedding(text):
+    resp = openai.Embedding.create(
+        input=text,
+        model="text-embedding-ada-002"
+    )
+    return np.array(resp["data"][0]["embedding"], dtype=np.float32)
+
+# Endpoint para subir documentos y generar embeddings
+@app.post("/upload_doc")
+async def upload_doc(file: UploadFile = File(...)):
+    filename = file.filename
+    ext = filename.split(".")[-1].lower()
+    if ext not in ["pdf", "txt"]:
+        return {"error": "Solo se permiten archivos PDF o TXT"}
+    content = await file.read()
+    if ext == "pdf":
+        with open(f"uploads/{filename}", "wb") as f:
+            f.write(content)
+        with pdfplumber.open(f"uploads/{filename}") as pdf:
+            text = "\n".join(page.extract_text() or '' for page in pdf.pages)
+    else:
+        text = content.decode("utf-8")
+    # Chunking simple (500 tokens aprox)
+    enc = tiktoken.get_encoding("cl100k_base")
+    chunks = []
+    chunk = ""
+    for para in text.split("\n"):
+        if len(enc.encode(chunk + para)) > 500:
+            if chunk:
+                chunks.append(chunk)
+            chunk = para
+        else:
+            chunk += "\n" + para
+    if chunk:
+        chunks.append(chunk)
+    # Embeddings y guardar en DB
+    conn = sqlite3.connect(EMBEDDINGS_DB)
+    c = conn.cursor()
+    for ch in chunks:
+        emb = await get_embedding(ch)
+        c.execute("INSERT INTO doc_embeddings (filename, chunk, embedding) VALUES (?, ?, ?)",
+                  (filename, ch, emb.tobytes()))
+    conn.commit()
+    conn.close()
+    return {"msg": f"Documento {filename} procesado y embebido."}
+
+# Buscar contexto relevante para una pregunta
+async def buscar_contexto(question, top_k=3):
+    q_emb = await get_embedding(question)
+    conn = sqlite3.connect(EMBEDDINGS_DB)
+    c = conn.cursor()
+    c.execute("SELECT chunk, embedding FROM doc_embeddings")
+    docs = c.fetchall()
+    conn.close()
+    if not docs:
+        return ""
+    sims = []
+    for chunk, emb_blob in docs:
+        emb = np.frombuffer(emb_blob, dtype=np.float32)
+        sim = np.dot(q_emb, emb) / (np.linalg.norm(q_emb) * np.linalg.norm(emb))
+        sims.append((sim, chunk))
+    sims.sort(reverse=True)
+    contextos = [chunk for _, chunk in sims[:top_k]]
+    return "\n---\n".join(contextos)
+
+@app.post("/summarize_doc")
+async def summarize_doc(file: UploadFile = File(...)):
+    filename = file.filename
+    ext = filename.split(".")[-1].lower()
+    if ext not in ["pdf", "txt"]:
+        return {"error": "Solo se permiten archivos PDF o TXT"}
+    content = await file.read()
+    if ext == "pdf":
+        with open(f"uploads/{filename}", "wb") as f:
+            f.write(content)
+        with pdfplumber.open(f"uploads/{filename}") as pdf:
+            text = "\n".join(page.extract_text() or '' for page in pdf.pages)
+    else:
+        text = content.decode("utf-8")
+    # Limitar tamaño para prompt
+    max_chars = 6000
+    if len(text) > max_chars:
+        text = text[:max_chars] + "..."
+    prompt = (
+        "Eres un asistente que solo puede leer y resumir el documento proporcionado. "
+        "No generes SQL ni accedas a la base de datos. "
+        "Responde solo con un resumen claro y directo del contenido del documento.\n\n"
+        f"Documento:\n{text}\n\nResumen:"
+    )
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    result = response.choices[0].message.content.strip()
+    return {"response": result}

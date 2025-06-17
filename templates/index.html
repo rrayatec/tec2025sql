@@ -169,10 +169,22 @@
             <option value="sql_expert">Experto SQL</option>
             <option value="data_analyst">Analista de Datos</option>
             <option value="profesor">Profesor</option>
+            <option value="doc_reader">Reader</option>
         </select>
-        <div style="display:flex; gap:10px; margin-top:10px;">
+        <form id="uploadForm" enctype="multipart/form-data" style="margin-bottom:18px;">
+            <input type="file" id="docFile" name="file" accept=".pdf,.txt" />
+            <button type="submit">Subir documento</button>
+            <span id="uploadMsg" class="small"></span>
+        </form>
+        <form id="summarizeForm" enctype="multipart/form-data" style="margin-bottom:18px;">
+            <input type="file" id="summarizeFile" name="file" accept=".pdf,.txt" />
+            <button type="submit">Resumir documento</button>
+            <span id="summarizeMsg" class="small"></span>
+        </form>
+        <div style="display:flex; gap:10px; margin-bottom:10px;">
             <button onclick="sendQuestion()">Preguntar (Normal)</button>
             <button onclick="sendAgentQuestion()">Preguntar con Agente</button>
+            <button onclick="sendAgentRagQuestion()">Preguntar con RAG</button>
         </div>
         <div id="chatLog"></div>
         <div id="loader" class="loader" style="display:none;">
@@ -245,6 +257,29 @@
             showLoader(false);
         }
 
+        async function sendAgentRagQuestion() {
+            const q = document.getElementById("question").value.trim();
+            const agent = document.getElementById("agent").value;
+            if (!q) return;
+            addMessage(q + "<br><span class='small'>(Agente+RAG: " + agent + ")</span>", true);
+            document.getElementById("question").value = "";
+            showLoader(true);
+            try {
+                const response = await fetch("/summarize_doc", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question: q, agent: agent })
+                });
+                const data = await response.json();
+                let html = data.response.replace(/Interpretación:/g, "<b>Interpretación:</b>").replace(/Resultados:/g, "<b>Resultados:</b>").replace(/Query:/g, "<div class='small'><b>Query:</b>") + "</div>";
+                html = addTableScroll(html);
+                await typeResponse(html);
+            } catch (e) {
+                addMessage("<span style='color:red'>Error al conectar con el backend.</span>");
+            }
+            showLoader(false);
+        }
+
         async function typeResponse(html) {
             const container = document.createElement("div");
             container.className = "bubble";
@@ -256,6 +291,57 @@
 
         document.getElementById("question").addEventListener("keydown", function (e) {
             if (e.key === "Enter") sendQuestion();
+        });
+
+        // Manejar el envío del formulario de carga de documentos
+        document.getElementById("uploadForm").addEventListener("submit", async function (e) {
+            e.preventDefault();
+            const fileInput = document.getElementById("docFile");
+            const msg = document.getElementById("uploadMsg");
+            if (!fileInput.files.length) {
+                msg.textContent = "Selecciona un archivo.";
+                return;
+            }
+            msg.textContent = "Subiendo...";
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+            try {
+                const resp = await fetch("/upload_doc", {
+                    method: "POST",
+                    body: formData
+                });
+                const data = await resp.json();
+                msg.textContent = data.msg || data.error || "";
+            } catch {
+                msg.textContent = "Error al subir archivo.";
+            }
+        });
+
+        // Manejar el envío del formulario de resumen de documentos
+        document.getElementById("summarizeForm").addEventListener("submit", async function (e) {
+            e.preventDefault();
+            const fileInput = document.getElementById("summarizeFile");
+            const msg = document.getElementById("summarizeMsg");
+            if (!fileInput.files.length) {
+                msg.textContent = "Selecciona un archivo.";
+                return;
+            }
+            msg.textContent = "Resumiendo...";
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+            showLoader(true);
+            try {
+                const resp = await fetch("/summarize_doc", {
+                    method: "POST",
+                    body: formData
+                });
+                const data = await resp.json();
+                msg.textContent = "";
+                addMessage("<b>Resumen del documento:</b><br>" + data.response);
+            } catch {
+                msg.textContent = "Error al resumir archivo.";
+            }
+            showLoader(false);
         });
     </script>
 </body>
